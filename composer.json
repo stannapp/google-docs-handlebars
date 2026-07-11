@@ -1,0 +1,23 @@
+{
+    "name": "stannapp/google-docs-handlebars",
+    "description": "Render a Handlebars-subset template living in a Google Doc, in place, through the Docs API",
+    "type": "library",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.2",
+        "ext-mbstring": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Stann\\GoogleDocsTemplate\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Stann\\GoogleDocsTemplate\\Tests\\": "tests/"
+        }
+    }
+}
