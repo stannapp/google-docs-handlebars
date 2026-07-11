@@ -15,7 +15,7 @@ tiny `DocumentClient` adapter and it never talks to the network itself.
 ## Installation
 
 ```bash
-composer require stannapp/google-docs-handlebars
+composer require stann/google-docs-handlebars
 ```
 
 ## Quick start

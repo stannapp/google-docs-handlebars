@@ -1,5 +1,5 @@
 {
-    "name": "stannapp/google-docs-handlebars",
+    "name": "stann/google-docs-handlebars",
     "description": "Render a Handlebars-subset template living in a Google Doc, in place, through the Docs API",
     "type": "library",
     "license": "proprietary",
