@@ -69,6 +69,7 @@ renders here renders identically under handlebars.js.
 | Loop | `{{#each items}} ... {{/each}}` | On a **table row** — see below. |
 | Loop item | `{{item.name}}`, `{{item.totalAmount}}` | Current row of the loop. |
 | Loop index | `{{@index}}` | Zero-based position. |
+| Helper | `{{date "DD/MM/YYYY" quotation.dueAt}}` | Registered at construction — see below. |
 
 Truthiness follows Handlebars: absent, `null`, `false`, `''`, `0` and empty
 lists are falsy.
@@ -76,9 +77,26 @@ lists are falsy.
 A variable whose path does not exist in the context is **left as-is** in the
 document, so template mistakes stay visible instead of silently disappearing.
 
+### Helpers
+
+The engine ships no helper: formatting is the integrator's concern. Register
+them at construction; arguments reach the callable in template order, string
+literals as written and paths resolved through the context ('' when absent):
+
+```php
+$engine = new TemplateEngine(helpers: [
+    'date' => fn(string $format, string $value): string => /* ... */,
+    'money' => fn(string $amount, string $currency = 'EUR'): string => /* ... */,
+]);
+// {{date "DD/MM/YYYY" quotation.dueAt}} calls $helpers['date']('DD/MM/YYYY', '2026-07-31T00:00:00+02:00')
+```
+
+An unregistered helper raises `UnsupportedFeatureError`; helpers cannot be
+applied to loop variables (`item.*`, `@index`) yet.
+
 ### Everything else is rejected on purpose
 
-`{{else}}`, partials (`{{> x}}`), helpers and arguments, `{{#with}}`, block
+`{{else}}`, partials (`{{> x}}`), subexpressions, `{{#with}}`, block
 parameters (`as |x|`), nested blocks, parent references (`../`), `@first` /
 `@last`, and triple-stache (`{{{x}}}`) raise an `UnsupportedFeatureError` with
 a message suitable for template authors. Malformed constructs (unclosed block,

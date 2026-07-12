@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Stann\GoogleDocsTemplate\Engine;
 
 use Stann\GoogleDocsTemplate\Ast\BlockNode;
+use Stann\GoogleDocsTemplate\Ast\HelperNode;
 use Stann\GoogleDocsTemplate\Ast\Template;
 use Stann\GoogleDocsTemplate\Ast\VariableNode;
 use Stann\GoogleDocsTemplate\Context\Context;
@@ -38,9 +39,10 @@ final class Planner
     ];
 
     /**
-     * @param Template[] $auxiliaryTemplates parsed headers, footers and footnotes — replace-only surfaces
+     * @param Template[]                       $auxiliaryTemplates parsed headers, footers and footnotes — replace-only surfaces
+     * @param array<string, callable(string...): string> $helpers  registered helpers, by name
      */
-    public function plan(DocumentText $document, Template $template, Context $context, array $auxiliaryTemplates = []): RenderPlan
+    public function plan(DocumentText $document, Template $template, Context $context, array $auxiliaryTemplates = [], array $helpers = []): RenderPlan
     {
         $loops = array_values(array_filter($template->blocks, static fn(BlockNode $b) => $b->kind === BlockNode::KIND_EACH));
         $conditions = array_values(array_filter($template->blocks, static fn(BlockNode $b) => $b->kind !== BlockNode::KIND_EACH));
@@ -56,6 +58,7 @@ final class Planner
         $this->assertVariableScopes($template, $loop, $loopRow);
         $this->assertConditionPlacements($document, $conditions, $loopRow);
         $this->assertAuxiliaryTemplates($auxiliaryTemplates);
+        $this->assertHelperCalls([$template, ...$auxiliaryTemplates], $helpers);
 
         /** @var list<array{anchor: int, request: array<string, mixed>}> $structural */
         $structural = [];
@@ -92,7 +95,7 @@ final class Planner
         return new RenderPlan(
             structuralRequests: array_column($structural, 'request'),
             loopFill: $loopFill,
-            finalReplacements: $this->finalReplacements($template, $auxiliaryTemplates, $context, $loop, $items),
+            finalReplacements: $this->finalReplacements($template, $auxiliaryTemplates, $context, $loop, $items, $helpers),
         );
     }
 
@@ -303,6 +306,50 @@ final class Planner
     }
 
     /**
+     * Helper calls must reference a registered helper, and stay out of the
+     * loop scope: copies are pre-rendered by raw-text substitution, which
+     * cannot evaluate a call per item.
+     *
+     * @param Template[]                       $templates
+     * @param array<string, callable(string...): string> $helpers
+     */
+    private function assertHelperCalls(array $templates, array $helpers): void
+    {
+        foreach ($templates as $parsed) {
+            foreach ($parsed->helpers as $call) {
+                if (!array_key_exists($call->name, $helpers)) {
+                    throw new UnsupportedFeatureError(sprintf('The helper "%s" is not registered.', $call->name), $call->raw);
+                }
+
+                foreach ($call->arguments as $argument) {
+                    if (!$argument['literal'] && $this->isLoopScoped($argument['value'])) {
+                        throw new UnsupportedFeatureError('Helpers cannot be applied to loop variables yet.', $call->raw);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Arguments reach the helper in template order: literals as written,
+     * paths resolved through the context ('' when absent).
+     *
+     * @param array<string, callable(string...): string> $helpers
+     */
+    private function evaluateHelper(HelperNode $call, Context $context, array $helpers): string
+    {
+        $arguments = [];
+
+        foreach ($call->arguments as $argument) {
+            $arguments[] = $argument['literal']
+                ? $argument['value']
+                : ($context->string($argument['value']) ?? '');
+        }
+
+        return (string) $helpers[$call->name](...$arguments);
+    }
+
+    /**
      * Value of a loop-scoped variable for a given item, or null when the
      * variable is not loop-scoped (left for the global fill).
      *
@@ -344,12 +391,13 @@ final class Planner
     }
 
     /**
-     * @param Template[]                 $auxiliaryTemplates
-     * @param list<array<string, mixed>> $items
+     * @param Template[]                       $auxiliaryTemplates
+     * @param list<array<string, mixed>>       $items
+     * @param array<string, callable(string...): string> $helpers
      *
      * @return list<array<string, mixed>>
      */
-    private function finalReplacements(Template $template, array $auxiliaryTemplates, Context $context, ?BlockNode $loop, array $items): array
+    private function finalReplacements(Template $template, array $auxiliaryTemplates, Context $context, ?BlockNode $loop, array $items, array $helpers): array
     {
         /** @var array<string, string> $replacements raw tag => replacement */
         $replacements = [];
@@ -387,6 +435,12 @@ final class Planner
                 if ($value !== null) {
                     $replacements[$variable->raw] = $value;
                 }
+            }
+        }
+
+        foreach ([$template, ...$auxiliaryTemplates] as $parsed) {
+            foreach ($parsed->helpers as $call) {
+                $replacements[$call->raw] ??= $this->evaluateHelper($call, $context, $helpers);
             }
         }
 

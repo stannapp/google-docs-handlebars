@@ -322,6 +322,74 @@ class TemplateEngineTest extends TestCase
         $this->engine->render($client, 'doc', ['items' => []]);
     }
 
+    public function test_helpers_format_values_with_their_template_order_arguments(): void
+    {
+        $client = new FakeDocumentClient(
+            GoogleDocBuilder::create()
+                ->paragraph('Le {{date "DD/MM/YYYY" quotation.dueAt}} — {{money quotation.totalAmount}}')
+                ->build(),
+        );
+
+        $engine = new TemplateEngine(helpers: [
+            'date' => static fn(string $format, string $value): string => 'DATE(' . $format . ',' . $value . ')',
+            'money' => static fn(string $amount): string => $amount . ' EUR',
+        ]);
+
+        $engine->render($client, 'doc', [
+            'quotation' => ['dueAt' => '2026-07-31T00:00:00+02:00', 'totalAmount' => 1234.5],
+        ]);
+
+        $replacements = $this->replacementMap($client->batches[0]);
+        self::assertSame('DATE(DD/MM/YYYY,2026-07-31T00:00:00+02:00)', $replacements['{{date "DD/MM/YYYY" quotation.dueAt}}']);
+        self::assertSame('1234.5 EUR', $replacements['{{money quotation.totalAmount}}']);
+    }
+
+    public function test_helpers_work_in_headers_too(): void
+    {
+        $client = new FakeDocumentClient(
+            GoogleDocBuilder::create()
+                ->paragraph('Corps')
+                ->header('{{date "YYYY" quotation.dueAt}}')
+                ->build(),
+        );
+
+        $engine = new TemplateEngine(helpers: [
+            'date' => static fn(string $format, string $value): string => 'OK',
+        ]);
+
+        $engine->render($client, 'doc', ['quotation' => ['dueAt' => 'x']]);
+
+        self::assertSame('OK', $this->replacementMap($client->batches[0])['{{date "YYYY" quotation.dueAt}}']);
+    }
+
+    public function test_an_unregistered_helper_is_rejected(): void
+    {
+        $client = new FakeDocumentClient(
+            GoogleDocBuilder::create()->paragraph('{{shout customer.name}}')->build(),
+        );
+
+        $this->expectException(UnsupportedFeatureError::class);
+
+        $this->engine->render($client, 'doc', ['customer' => ['name' => 'x']]);
+    }
+
+    public function test_helpers_on_loop_variables_are_rejected(): void
+    {
+        $client = new FakeDocumentClient(
+            GoogleDocBuilder::create()
+                ->table([['{{#each items}}{{date "YYYY" item.at}}{{/each}}']])
+                ->build(),
+        );
+
+        $engine = new TemplateEngine(helpers: [
+            'date' => static fn(string $format, string $value): string => 'OK',
+        ]);
+
+        $this->expectException(UnsupportedFeatureError::class);
+
+        $engine->render($client, 'doc', ['items' => [['at' => 'x']]]);
+    }
+
     public function test_only_one_loop_is_supported(): void
     {
         $client = new FakeDocumentClient(

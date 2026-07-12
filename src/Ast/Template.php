@@ -13,11 +13,13 @@ final readonly class Template
      * @param VariableNode[] $variables
      * @param CommentNode[]  $comments
      * @param BlockNode[]    $blocks
+     * @param HelperNode[]   $helpers
      */
     public function __construct(
         public array $variables,
         public array $comments,
         public array $blocks,
+        public array $helpers = [],
     ) {}
 
     public function blockContaining(int $offset): ?BlockNode

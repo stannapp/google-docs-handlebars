@@ -82,7 +82,6 @@ comment --}}',
         yield 'triple stache' => ['{{{raw}}}'];
         yield 'else' => ['{{#if a}}x{{else}}y{{/if}}'];
         yield 'partial' => ['{{> header}}'];
-        yield 'helper with arguments' => ['{{formatDate date}}'];
         yield 'block helper' => ['{{#with customer}}{{name}}{{/with}}'];
         yield 'block params' => ['{{#each items as |line|}}{{/each}}'];
         yield 'nested blocks' => ['{{#if a}}{{#each items}}{{/each}}{{/if}}'];
@@ -109,5 +108,28 @@ comment --}}',
         yield 'closer without opener' => ['{{/if}}'];
         yield 'mismatched closer' => ['{{#if a}}{{/each}}'];
         yield 'invalid path' => ['{{foo..bar}}'];
+    }
+
+    public function test_a_helper_call_parses_its_name_and_ordered_arguments(): void
+    {
+        $template = (new Parser())->parse('Le {{date "DD/MM/YYYY" quotation.dueAt}}');
+
+        self::assertCount(1, $template->helpers);
+        self::assertCount(0, $template->variables);
+
+        $call = $template->helpers[0];
+        self::assertSame('date', $call->name);
+        self::assertSame('{{date "DD/MM/YYYY" quotation.dueAt}}', $call->raw);
+        self::assertSame([
+            ['literal' => true, 'value' => 'DD/MM/YYYY'],
+            ['literal' => false, 'value' => 'quotation.dueAt'],
+        ], $call->arguments);
+    }
+
+    public function test_a_helper_argument_must_be_a_literal_or_a_valid_path(): void
+    {
+        $this->expectException(TemplateSyntaxError::class);
+
+        (new Parser())->parse('{{date "DD/MM/YYYY" not..a..path}}');
     }
 }

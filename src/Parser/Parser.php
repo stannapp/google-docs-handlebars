@@ -6,6 +6,7 @@ namespace Stann\GoogleDocsTemplate\Parser;
 
 use Stann\GoogleDocsTemplate\Ast\BlockNode;
 use Stann\GoogleDocsTemplate\Ast\CommentNode;
+use Stann\GoogleDocsTemplate\Ast\HelperNode;
 use Stann\GoogleDocsTemplate\Ast\Template;
 use Stann\GoogleDocsTemplate\Ast\VariableNode;
 use Stann\GoogleDocsTemplate\Exception\TemplateSyntaxError;
@@ -33,6 +34,7 @@ final class Parser
         $variables = [];
         $comments = [];
         $blocks = [];
+        $helpers = [];
         /** @var array{kind: string, path: string, raw: string, start: int, end: int}|null $openBlock */
         $openBlock = null;
 
@@ -67,14 +69,20 @@ final class Parser
                 continue;
             }
 
-            $variables[] = $this->variable($inner, $raw, $start, $end);
+            $node = $this->variableOrHelper($inner, $raw, $start, $end);
+
+            if ($node instanceof HelperNode) {
+                $helpers[] = $node;
+            } else {
+                $variables[] = $node;
+            }
         }
 
         if ($openBlock !== null) {
             throw new TemplateSyntaxError(sprintf('The block "%s" is never closed with {{/%s}}.', $openBlock['raw'], $openBlock['kind']), $openBlock['raw']);
         }
 
-        return new Template($variables, $comments, $blocks);
+        return new Template($variables, $comments, $blocks, $helpers);
     }
 
     private function innerContent(string $raw): string
@@ -152,7 +160,7 @@ final class Parser
         );
     }
 
-    private function variable(string $inner, string $raw, int $start, int $end): VariableNode
+    private function variableOrHelper(string $inner, string $raw, int $start, int $end): VariableNode|HelperNode
     {
         if (str_starts_with($inner, '>')) {
             throw new UnsupportedFeatureError('Partials are not supported.', $raw);
@@ -166,13 +174,55 @@ final class Parser
             throw new UnsupportedFeatureError('Parent and root context references are not supported.', $raw);
         }
 
-        if (preg_match('/\s/', $inner) === 1 || str_contains($inner, '(')) {
-            throw new UnsupportedFeatureError('Helpers and arguments are not supported: use a single property path.', $raw);
+        if (str_contains($inner, '(')) {
+            throw new UnsupportedFeatureError('Subexpressions are not supported.', $raw);
+        }
+
+        // Whitespace splits a helper call from a plain variable:
+        // {{date "DD/MM/YYYY" quotation.dueAt}} vs {{quotation.dueAt}}.
+        if (preg_match('/\s/', $inner) === 1) {
+            return $this->helper($inner, $raw, $start, $end);
         }
 
         $this->assertPath($inner, $raw, allowMetadata: true);
 
         return new VariableNode($inner, $raw, $start, $end);
+    }
+
+    /**
+     * A helper call, Handlebars-style: a name followed by arguments in
+     * template order, each either a "quoted literal" or a property path.
+     */
+    private function helper(string $inner, string $raw, int $start, int $end): HelperNode
+    {
+        if (preg_match_all('/"[^"]*"|\S+/', $inner, $matches) === false || count($matches[0]) < 2) {
+            throw new TemplateSyntaxError('A helper call needs a name and at least one argument.', $raw);
+        }
+
+        $tokens = $matches[0];
+        $name = array_shift($tokens);
+
+        if (preg_match('/^[a-z][A-Za-z0-9_]*$/', $name) !== 1) {
+            throw new TemplateSyntaxError(sprintf('"%s" is not a valid helper name.', $name), $raw);
+        }
+
+        $arguments = [];
+
+        foreach ($tokens as $token) {
+            if (str_starts_with($token, '"')) {
+                if (!str_ends_with($token, '"') || strlen($token) < 2) {
+                    throw new TemplateSyntaxError('Unterminated string literal in helper call.', $raw);
+                }
+
+                $arguments[] = ['literal' => true, 'value' => substr($token, 1, -1)];
+                continue;
+            }
+
+            $this->assertPath($token, $raw, allowMetadata: true);
+            $arguments[] = ['literal' => false, 'value' => $token];
+        }
+
+        return new HelperNode($name, $arguments, $raw, $start, $end);
     }
 
     private function assertPath(string $path, string $raw, bool $allowMetadata): void
